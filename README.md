@@ -9,8 +9,8 @@ Aquí explico el problema, la solución y las decisiones tomadas (Time-to-market
 ## 📂 Contenido del Repositorio
 
 1.  **Workflows (n8n):**
-    * `workflows/1_lead_intake_process.json`: Flujo principal que recibe el lead, consulta mocks (Registraduría/SNR), ejecuta el Agente de IA para scoring y notifica.
-    * `workflows/2_error_audit_template.json`: Sistema centralizado de manejo de errores que notifica a Slack y traduce logs técnicos con IA.
+    * `Sureti - Lead Intake Form (Template).json`: Flujo principal que recibe el lead, consulta mocks (Registraduría/SNR), ejecuta el Agente de IA para scoring y notifica.
+    * `🚨 Template - Auditoría Errores con IA.json`: Sistema centralizado de manejo de errores que notifica a Slack y traduce logs técnicos con IA.
 2.  **Documentación:**
     * `docs/politica_aceptacion.pdf`: Política de riesgo diseñada para el reto.
     * `docs/architecture_diagram.svg`: Vista gráfica del flujo de automatización.
