@@ -1,0 +1,737 @@
+{
+  "name": "Sureti - Lead Intake Form (Template)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lead-form",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        64,
+        96
+      ],
+      "id": "3ef2a8cd-d98a-428d-8a71-d926e70436d4",
+      "name": "🔗 Formulario de Ingreso",
+      "webhookId": "754f0f2d-df38-4129-8731-7738721bb585"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-process",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -288,
+        448
+      ],
+      "id": "3fa45a14-f381-46a7-a5b6-d83f3c4f0c9c",
+      "name": "🔗 Recepción de Datos",
+      "webhookId": "754f0f2d-df38-4129-8731-7738721bb585"
+    },
+    {
+      "parameters": {
+        "path": "lead-result",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        1216,
+        112
+      ],
+      "id": "b0c0ad27-f553-4f53-8d9f-721f705a6261",
+      "name": "🔗 Consulta de Resultado",
+      "webhookId": "754f0f2d-df38-4129-8731-7738721bb585"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entrada esperada: el webhook manda el payload dentro de body\nconst inputData = $input.first().json.body;\n\n// Campos mínimos para poder procesar el lead completo\nconst requiredFields = [\n  'nombre_completo', 'tipo_documento', 'cedula', 'email', 'telefono',\n  'direccion_inmueble', 'ciudad', 'tipo_inmueble', 'matricula_inmobiliaria',\n  'valor_avaluo', 'monto_solicitado', 'destino_credito', 'acepto_terminos'\n];\n\nconst missingFields = requiredFields.filter(field => !inputData[field]);\nif (missingFields.length > 0) {\n  throw new Error(`Campos faltantes: ${missingFields.join(', ')}`);\n}\n\n// Ojo: aquí asumimos que vienen números “limpios” (sin puntos/ comas)\nconst valorAvaluo = parseInt(inputData.valor_avaluo);\nconst montoSolicitado = parseInt(inputData.monto_solicitado);\n\n// LTV = (monto / avalúo) * 100\nconst ltv = (montoSolicitado / valorAvaluo * 100).toFixed(2);\n\nconst leadId = `LEAD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\n\nconst processedData = {\n  lead_id: leadId,\n  timestamp: new Date().toISOString(),\n  fuente: inputData.fuente || 'formulario_web',\n  datos_personales: {\n    nombre_completo: inputData.nombre_completo.trim(),\n    tipo_documento: inputData.tipo_documento,\n    cedula: inputData.cedula,\n    email: inputData.email.toLowerCase().trim(),\n    telefono: inputData.telefono\n  },\n  datos_inmueble: {\n    direccion: inputData.direccion_inmueble.trim(),\n    ciudad: inputData.ciudad,\n    tipo_inmueble: inputData.tipo_inmueble,\n    matricula_inmobiliaria: inputData.matricula_inmobiliaria.trim(),\n    valor_avaluo: valorAvaluo,\n    area_m2: inputData.area_m2 ? parseInt(inputData.area_m2) : null\n  },\n  datos_prestamo: {\n    monto_solicitado: montoSolicitado,\n    ltv: parseFloat(ltv),\n    plazo_meses: inputData.plazo_meses ? parseInt(inputData.plazo_meses) : null,\n    destino_credito: inputData.destino_credito,\n    ingresos_mensuales: inputData.ingresos_mensuales ? parseInt(inputData.ingresos_mensuales) : null\n  },\n  estado: {\n    etapa: 'RECIBIDO',\n    validado: true,\n    fecha_recepcion: new Date().toISOString()\n  }\n};\n\nprocessedData.flags_riesgo = [];\n\n// Regla rápida: arriba de 80% lo marcamos como excluyente\nif (ltv > 80) {\n  processedData.flags_riesgo.push({ tipo: 'LTV_ALTO', severidad: 'ALTA', mensaje: `LTV de ${ltv}% supera el 80%`, es_excluyente: true });\n}\n\nif (montoSolicitado < 20000000) {\n  processedData.flags_riesgo.push({ tipo: 'MONTO_BAJO', severidad: 'BAJA', mensaje: 'Monto inferior a $20M', es_excluyente: false });\n}\n\n// Respuesta inmediata para el frontend (sin esperar el resto del flujo)\nconst immediateResponse = {\n  success: true,\n  lead_id: leadId,\n  mensaje: 'Solicitud recibida correctamente'\n};\n\nreturn [{\n  json: {\n    ...processedData,\n    responseData: immediateResponse\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        448
+      ],
+      "id": "feed515e-be03-40bf-baea-bb77723702ff",
+      "name": "✅ Validar Campos Requeridos"
+    },
+    {
+      "parameters": {
+        "jsCode": "const leadData = $input.item.json;\nconst cedula = leadData.datos_personales.cedula;\nconst nombre = leadData.datos_personales.nombre_completo;\n\n// Mock: solo simula escenarios según el último dígito (no es una consulta real)\nconst ultimoDigito = parseInt(cedula.slice(-1));\n\nlet estado, verificado, mensaje;\n\nif (ultimoDigito === 9) {\n  estado = \"NO_ENCONTRADO\";\n  verificado = false;\n  mensaje = \"Cédula no encontrada en base de datos de Registraduría\";\n} else if (ultimoDigito === 8) {\n  estado = \"FALLECIDO\";\n  verificado = false;\n  mensaje = \"Registro indica que la persona ha fallecido\";\n} else {\n  estado = \"ACTIVO\";\n  verificado = true;\n  mensaje = \"Identidad verificada exitosamente\";\n}\n\n// Datos adicionales “inventados” solo para enriquecer el ejemplo\nconst fechaNacimiento = new Date(\n  1960 + (ultimoDigito * 3),\n  Math.floor(Math.random() * 12),\n  Math.floor(Math.random() * 28) + 1\n);\n\nconst edad = new Date().getFullYear() - fechaNacimiento.getFullYear();\n\nconst registraduriaResponse = {\n  api_source: \"MOCK_REGISTRADURIA_NACIONAL\",\n  timestamp_consulta: new Date().toISOString(),\n\n  cedula_consultada: cedula,\n  nombre_consultado: nombre,\n\n  validacion: {\n    estado: estado,\n    verificado: verificado,\n    mensaje: mensaje,\n    confiabilidad: verificado ? 0.95 : 0.0\n  },\n\n  datos_ciudadano: verificado ? {\n    nombre_registrado: nombre,\n    fecha_nacimiento: fechaNacimiento.toISOString().split('T')[0],\n    edad: edad,\n    lugar_nacimiento: ultimoDigito % 2 === 0 ? \"Bogotá D.C.\" : \"Medellín\",\n    estado_civil: [\"SOLTERO\", \"CASADO\", \"UNION_LIBRE\"][ultimoDigito % 3],\n    genero: ultimoDigito % 2 === 0 ? \"M\" : \"F\"\n  } : null,\n\n  alertas: estado === \"FALLECIDO\" ? [{\n    tipo: \"CRITERIO_EXCLUYENTE\",\n    severidad: \"CRITICA\",\n    mensaje: \"Propietario registrado como fallecido\",\n    accion_requerida: \"Rechazar solicitud\"\n  }] : estado === \"NO_ENCONTRADO\" ? [{\n    tipo: \"IDENTIDAD_NO_VERIFICADA\",\n    severidad: \"ALTA\",\n    mensaje: \"No se pudo verificar la identidad del solicitante\",\n    accion_requerida: \"Solicitar documento adicional\"\n  }] : [],\n\n  metadata: {\n    tiempo_respuesta_ms: Math.floor(Math.random() * 500) + 100,\n    cache_hit: false,\n    api_version: \"mock_v1.0\"\n  }\n};\n\nreturn {\n  json: {\n    ...leadData,\n    validaciones: {\n      ...leadData.validaciones,\n      registraduria: registraduriaResponse\n    }\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        448
+      ],
+      "id": "47525fc6-a4ee-4de9-bc68-a6d67cb181b4",
+      "name": "🆔 Verificar Mock Registraduría Nacional",
+      "notesInFlow": false,
+      "notes": "Si la cédula termina en 9 → la identidad no se encuentra (persona no registrada).\nSi la cédula termina en 8 → la persona figura como fallecida.\nCualquier otro número → identidad válida y verificada."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "Analiza este lead basándote en la política de riesgos definida",
+        "hasOutputParser": true,
+        "needsFallback": true,
+        "options": {
+          "systemMessage": "=Eres un analista de riesgo crediticio senior especializado en préstamos hipotecarios en Colombia.\n\nDATOS DEL LEAD A ANALIZAR:\n{{ JSON.stringify($json, null, 2) }}\n\nPOLÍTICA DE ACEPTACIÓN:\n\nCRITERIOS EXCLUYENTES (Rechazo Automático = NO_VIABLE):\n1. validaciones.registraduria.validacion.verificado === false\n2. validaciones.snr_catastro.validacion_propiedad.es_propietario === false\n3. validaciones.snr_catastro.gravamenes.tiene_embargo === true\n4. datos_prestamo.ltv > 80\n5. validaciones.snr_catastro.gravamenes.numero_total > 2\n6. validaciones.registraduria.validacion.estado === \"FALLECIDO\"\n\nSISTEMA DE SCORING (0-100 puntos):\n\nLTV (Loan-to-Value) - Hasta 35 puntos:\n- LTV < 40%: 35 pts\n- LTV 40-50%: 30 pts\n- LTV 50-60%: 25 pts\n- LTV 60-70%: 20 pts\n- LTV 70-80%: 10 pts\n- LTV > 80%: EXCLUYENTE\n\nEstado del Inmueble - Hasta 30 puntos:\n- Sin gravámenes: +15 pts\n- 1 gravamen: +7 pts\n- Sin embargo: +15 pts\n- Por cada gravamen adicional: -5 pts\n\nCaracterísticas del Inmueble - Hasta 20 puntos:\nTipo:\n- Apartamento en ciudad principal: +10 pts\n- Casa en ciudad principal: +8 pts\n- Local comercial: +5 pts\n\nEstrato:\n- 5-6: +10 pts\n- 4: +7 pts\n- 3: +5 pts\n- 1-2: +2 pts\n\nÁrea:\n- > 100 m²: +5 pts\n- 60-100 m²: +3 pts\n\nPerfil del Solicitante - Hasta 15 puntos:\n- Identidad verificada: +5 pts\n- Propietario único: +5 pts\n- Ingresos declarados: +3 pts\n- Copropiedad: -3 pts\n\nCLASIFICACIÓN FINAL:\n- NO_VIABLE: 0-39 puntos O criterio excluyente\n- VIABLE: 40-69 puntos\n- ALTAMENTE_VIABLE: 70-100 puntos\n\nINSTRUCCIONES:\n- Analiza todos los datos del lead\n- Calcula el score preciso\n- Si hay criterio excluyente, score = 0 y clasificacion = NO_VIABLE\n- Incluye valores numéricos en las razones (ej: \"LTV de 65%\")\n- Sé objetivo y basado en datos\n- \"IMPORTANTE: Debes devolver SIEMPRE el objeto JSON COMPLETO con todos sus campos (recomendacion, desglose_puntaje, etc.), incluso si la clasificación es NO_VIABLE. No omitas ninguna propiedad definida en el esquema.\""
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        608,
+        448
+      ],
+      "id": "6511afb4-3bc6-4386-9ca2-81871187960c",
+      "name": "🤖 Análisis de Riesgo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// El agente a veces devuelve todo dentro de \"output\" (según configuración / parser)\nconst agentResponse = $input.item.json;\nconst aiAnalysis = agentResponse.output ? agentResponse.output : agentResponse;\n\n// Traemos el lead “fuerte” desde el nodo anterior (ojo con el nombre exacto del nodo)\nconst leadData = $('🆔 Verificar Mock SNR').item.json;\n\nconst metrics = {\n  ltv: leadData.datos_prestamo.ltv,\n  tiempo_procesamiento_ms: Date.now() - new Date(leadData.timestamp).getTime(),\n};\n\n// Este objeto es el que está pensado para mapear directo a Google Sheets\nconst rowForSheets = {\n  timestamp: new Date().toISOString(),\n  lead_id: leadData.lead_id,\n\n  clasificacion: aiAnalysis.clasificacion,\n  score: aiAnalysis.score,\n  razones: aiAnalysis.razones_principales.join(' | '),\n  riesgos: (aiAnalysis.riesgos_identificados || []).join(' | '),\n  criterios_excluyentes: (aiAnalysis.criterios_excluyentes || []).join(' | '),\n  recomendacion: aiAnalysis.recomendacion,\n  proximos_pasos: aiAnalysis.proximos_pasos,\n\n  version_workflow: 'v2.0-ai-agent'\n};\n\nreturn {\n  json: {\n    ...leadData,\n    analisis_ia: aiAnalysis,\n    sheet_row: rowForSheets,\n    metricas: metrics\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        448
+      ],
+      "id": "ac48084e-05df-48c4-921f-b422edbcea91",
+      "name": "📊 Formatear Resultado IA"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "gpt-4o"
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 1500,
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          },
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        688
+      ],
+      "id": "3bb43313-9cd3-4e00-a9da-c6d89047ccdf",
+      "name": "🧠 Modelo OpenAI GPT-4",
+      "credentials": {
+        "openAiApi": {
+          "id": "vJJfC3kjlS3SKPBJ",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        688,
+        656
+      ],
+      "id": "43fca940-7b97-44a1-9dc8-d2199b8afd17",
+      "name": "🔮 Modelo Google Gemini"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"clasificacion\": {\n      \"type\": \"string\",\n      \"enum\": [\"NO_VIABLE\", \"VIABLE\", \"ALTAMENTE_VIABLE\"],\n      \"description\": \"La clasificación final del lead según la política de riesgo.\"\n    },\n    \"score\": {\n      \"type\": \"integer\",\n      \"minimum\": 0,\n      \"maximum\": 100,\n      \"description\": \"Puntaje calculado del 0 al 100.\"\n    },\n    \"criterios_excluyentes\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" },\n      \"description\": \"Lista de razones si hubo rechazo automático.\"\n    },\n    \"desglose_puntaje\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"ltv\": { \"type\": \"integer\" },\n        \"estado_inmueble\": { \"type\": \"integer\" },\n        \"caracteristicas_inmueble\": { \"type\": \"integer\" },\n        \"perfil_solicitante\": { \"type\": \"integer\" }\n      },\n      \"required\": [\"ltv\", \"estado_inmueble\", \"caracteristicas_inmueble\", \"perfil_solicitante\"]\n    },\n    \"razones_principales\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" },\n      \"description\": \"Las razones clave de la decisión.\"\n    },\n    \"riesgos_identificados\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" },\n      \"description\": \"Lista de riesgos detectados.\"\n    },\n    \"recomendacion\": {\n      \"type\": \"string\",\n      \"description\": \"Texto breve de recomendación para el equipo comercial.\"\n    },\n    \"documentos_adicionales\": {\n      \"type\": \"array\",\n      \"items\": { \"type\": \"string\" }\n    },\n    \"proximos_pasos\": {\n      \"type\": \"string\",\n      \"description\": \"Siguiente acción concreta a realizar.\"\n    }\n  },\n  \"required\": [\n    \"clasificacion\",\n    \"score\",\n    \"criterios_excluyentes\",\n    \"desglose_puntaje\",\n    \"razones_principales\",\n    \"riesgos_identificados\",\n    \"recomendacion\",\n    \"documentos_adicionales\",\n    \"proximos_pasos\"\n  ],\n  \"additionalProperties\": false\n}",
+        "autoFix": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        800,
+        720
+      ],
+      "id": "6ecfcdda-9840-4477-95f2-01bb0e3a6603",
+      "name": "📋 Parser de Salida"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Solicitud de Préstamo Hipotecario - Sureti</title>\n    <style>\n        * {\n            margin: 0;\n            padding: 0;\n            box-sizing: border-box;\n        }\n\n        body {\n            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\n            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #60a5fa 100%);\n            min-height: 100vh;\n            padding: 2rem 1rem;\n            display: flex;\n            justify-content: center;\n            align-items: center;\n        }\n\n        .container {\n            background: white;\n            max-width: 800px;\n            width: 100%;\n            border-radius: 24px;\n            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);\n            overflow: hidden;\n        }\n\n        .header {\n            background: linear-gradient(135deg, #1e3a8a, #3b82f6);\n            color: white;\n            padding: 3rem 2rem;\n            text-align: center;\n        }\n\n        .header h1 {\n            font-size: 2rem;\n            margin-bottom: 0.5rem;\n            font-weight: 700;\n        }\n\n        .header p {\n            opacity: 0.9;\n            font-size: 1rem;\n        }\n\n        .form-container {\n            padding: 2.5rem 2rem;\n        }\n\n        .progress-bar {\n            height: 6px;\n            background: #e5e7eb;\n            border-radius: 3px;\n            margin-bottom: 2rem;\n            overflow: hidden;\n        }\n\n        .progress-fill {\n            height: 100%;\n            background: linear-gradient(90deg, #3b82f6, #60a5fa);\n            width: 0%;\n            transition: width 0.3s ease;\n        }\n\n        .section {\n            margin-bottom: 2rem;\n        }\n\n        .section-title {\n            font-size: 1.25rem;\n            font-weight: 600;\n            color: #1e3a8a;\n            margin-bottom: 1.5rem;\n            display: flex;\n            align-items: center;\n            gap: 0.5rem;\n        }\n\n        .section-icon {\n            font-size: 1.5rem;\n        }\n\n        .form-group {\n            margin-bottom: 1.5rem;\n        }\n\n        label {\n            display: block;\n            font-weight: 500;\n            color: #374151;\n            margin-bottom: 0.5rem;\n            font-size: 0.95rem;\n        }\n\n        .required {\n            color: #ef4444;\n            margin-left: 0.25rem;\n        }\n\n        input, select, textarea {\n            width: 100%;\n            padding: 0.875rem 1rem;\n            border: 2px solid #e5e7eb;\n            border-radius: 12px;\n            font-size: 1rem;\n            transition: all 0.3s ease;\n            font-family: inherit;\n        }\n\n        input:focus, select:focus, textarea:focus {\n            outline: none;\n            border-color: #3b82f6;\n            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);\n        }\n\n        input.error, select.error {\n            border-color: #ef4444;\n        }\n\n        .error-message {\n            color: #ef4444;\n            font-size: 0.875rem;\n            margin-top: 0.5rem;\n            display: none;\n        }\n\n        .error-message.show {\n            display: block;\n        }\n\n        .input-hint {\n            font-size: 0.875rem;\n            color: #6b7280;\n            margin-top: 0.25rem;\n        }\n\n        .form-row {\n            display: grid;\n            grid-template-columns: 1fr 1fr;\n            gap: 1rem;\n        }\n\n        .checkbox-group {\n            display: flex;\n            align-items: center;\n            gap: 0.5rem;\n        }\n\n        .checkbox-group input[type=\"checkbox\"] {\n            width: auto;\n            margin: 0;\n        }\n\n        .submit-btn {\n            width: 100%;\n            padding: 1rem 2rem;\n            background: linear-gradient(135deg, #1e3a8a, #3b82f6);\n            color: white;\n            border: none;\n            border-radius: 12px;\n            font-size: 1.125rem;\n            font-weight: 600;\n            cursor: pointer;\n            transition: all 0.3s ease;\n            margin-top: 1rem;\n        }\n\n        .submit-btn:hover {\n            transform: translateY(-2px);\n            box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);\n        }\n\n        .submit-btn:disabled {\n            opacity: 0.6;\n            cursor: not-allowed;\n            transform: none;\n        }\n\n        .loading {\n            display: none;\n            text-align: center;\n            padding: 2rem;\n        }\n\n        .loading.show {\n            display: block;\n        }\n\n        .spinner {\n            border: 4px solid #e5e7eb;\n            border-top: 4px solid #3b82f6;\n            border-radius: 50%;\n            width: 50px;\n            height: 50px;\n            animation: spin 1s linear infinite;\n            margin: 0 auto 1rem;\n        }\n\n        @keyframes spin {\n            0% { transform: rotate(0deg); }\n            100% { transform: rotate(360deg); }\n        }\n\n        .info-box {\n            background: #eff6ff;\n            border-left: 4px solid #3b82f6;\n            padding: 1rem;\n            border-radius: 8px;\n            margin-bottom: 1.5rem;\n        }\n\n        .info-box p {\n            color: #1e40af;\n            font-size: 0.95rem;\n            line-height: 1.5;\n        }\n\n        @media (max-width: 640px) {\n            .form-row {\n                grid-template-columns: 1fr;\n            }\n            \n            .header h1 {\n                font-size: 1.5rem;\n            }\n            \n            .form-container {\n                padding: 1.5rem 1rem;\n            }\n        }\n\n        /* Formato de moneda */\n        .currency-input {\n            position: relative;\n        }\n\n        .currency-symbol {\n            position: absolute;\n            left: 1rem;\n            top: 50%;\n            transform: translateY(-50%);\n            color: #6b7280;\n            font-weight: 500;\n        }\n\n        .currency-input input {\n            padding-left: 2.5rem;\n        }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"header\">\n            <h1>🏠 Solicitud de Préstamo Hipotecario</h1>\n            <p>Completa el formulario y recibe una respuesta en minutos</p>\n        </div>\n\n        <div class=\"form-container\">\n            <div class=\"progress-bar\">\n                <div class=\"progress-fill\" id=\"progressBar\"></div>\n            </div>\n\n            <form id=\"leadForm\">\n                \n                <div class=\"section\">\n                    <div class=\"section-title\">\n                        <span class=\"section-icon\">👤</span>\n                        Información Personal\n                    </div>\n\n                    <div class=\"form-group\">\n                        <label for=\"nombre_completo\">Nombre Completo <span class=\"required\">*</span></label>\n                        <input \n                            type=\"text\" \n                            id=\"nombre_completo\" \n                            name=\"nombre_completo\" \n                            placeholder=\"Ej: Juan Pérez García\"\n                            required\n                        >\n                        <span class=\"error-message\" id=\"error-nombre\"></span>\n                    </div>\n\n                    <div class=\"form-row\">\n                        <div class=\"form-group\">\n                            <label for=\"tipo_documento\">Tipo de Documento <span class=\"required\">*</span></label>\n                            <select id=\"tipo_documento\" name=\"tipo_documento\" required>\n                                <option value=\"\">Selecciona...</option>\n                                <option value=\"CC\">Cédula de Ciudadanía</option>\n                                <option value=\"CE\">Cédula de Extranjería</option>\n                                <option value=\"PEP\">Permiso Especial de Permanencia</option>\n                            </select>\n                        </div>\n\n                        <div class=\"form-group\">\n                            <label for=\"cedula\">Número de Documento <span class=\"required\">*</span></label>\n                            <input \n                                type=\"text\" \n                                id=\"cedula\" \n                                name=\"cedula\" \n                                placeholder=\"Ej: 1234567890\"\n                                pattern=\"[0-9]{6,10}\"\n                                required\n                            >\n                            <span class=\"input-hint\">Solo números, sin puntos ni comas</span>\n                            <span class=\"error-message\" id=\"error-cedula\"></span>\n                        </div>\n                    </div>\n\n                    <div class=\"form-row\">\n                        <div class=\"form-group\">\n                            <label for=\"email\">Correo Electrónico <span class=\"required\">*</span></label>\n                            <input \n                                type=\"email\" \n                                id=\"email\" \n                                name=\"email\" \n                                placeholder=\"ejemplo@correo.com\"\n                                required\n                            >\n                            <span class=\"error-message\" id=\"error-email\"></span>\n                        </div>\n\n                        <div class=\"form-group\">\n                            <label for=\"telefono\">Teléfono/Celular <span class=\"required\">*</span></label>\n                            <input \n                                type=\"tel\" \n                                id=\"telefono\" \n                                name=\"telefono\" \n                                placeholder=\"Ej: 3001234567\"\n                                pattern=\"[0-9]{10}\"\n                                required\n                            >\n                            <span class=\"input-hint\">10 dígitos, incluye indicativo</span>\n                            <span class=\"error-message\" id=\"error-telefono\"></span>\n                        </div>\n                    </div>\n                </div>\n\n                \n                <div class=\"section\">\n                    <div class=\"section-title\">\n                        <span class=\"section-icon\">🏡</span>\n                        Información del Inmueble\n                    </div>\n\n                    <div class=\"info-box\">\n                        <p><strong>Importante:</strong> El inmueble debe estar a tu nombre y libre de gravámenes para calificar.</p>\n                    </div>\n\n                    <div class=\"form-group\">\n                        <label for=\"direccion_inmueble\">Dirección del Inmueble <span class=\"required\">*</span></label>\n                        <input \n                            type=\"text\" \n                            id=\"direccion_inmueble\" \n                            name=\"direccion_inmueble\" \n                            placeholder=\"Ej: Calle 123 # 45-67, Bogotá\"\n                            required\n                        >\n                    </div>\n\n                    <div class=\"form-row\">\n                        <div class=\"form-group\">\n                            <label for=\"ciudad\">Ciudad <span class=\"required\">*</span></label>\n                            <select id=\"ciudad\" name=\"ciudad\" required>\n                                <option value=\"\">Selecciona...</option>\n                                <option value=\"Bogotá\">Bogotá D.C.</option>\n                                <option value=\"Medellín\">Medellín</option>\n                                <option value=\"Cali\">Cali</option>\n                                <option value=\"Barranquilla\">Barranquilla</option>\n                                <option value=\"Cartagena\">Cartagena</option>\n                                <option value=\"Bucaramanga\">Bucaramanga</option>\n                                <option value=\"Pereira\">Pereira</option>\n                                <option value=\"Santa Marta\">Santa Marta</option>\n                                <option value=\"Otra\">Otra ciudad</option>\n                            </select>\n                        </div>\n\n                        <div class=\"form-group\">\n                            <label for=\"tipo_inmueble\">Tipo de Inmueble <span class=\"required\">*</span></label>\n                            <select id=\"tipo_inmueble\" name=\"tipo_inmueble\" required>\n                                <option value=\"\">Selecciona...</option>\n                                <option value=\"Apartamento\">Apartamento</option>\n                                <option value=\"Casa\">Casa</option>\n                                <option value=\"Local Comercial\">Local Comercial</option>\n                                <option value=\"Lote\">Lote</option>\n                                <option value=\"Finca\">Finca</option>\n                            </select>\n                        </div>\n                    </div>\n\n                    <div class=\"form-group\">\n                        <label for=\"matricula_inmobiliaria\">Matrícula Inmobiliaria <span class=\"required\">*</span></label>\n                        <input \n                            type=\"text\" \n                            id=\"matricula_inmobiliaria\" \n                            name=\"matricula_inmobiliaria\" \n                            placeholder=\"Ej: 050-123456\"\n                            required\n                        >\n                        <span class=\"input-hint\">Número que aparece en el certificado de tradición y libertad</span>\n                        <span class=\"error-message\" id=\"error-matricula\"></span>\n                    </div>\n\n                    <div class=\"form-row\">\n                        <div class=\"form-group\">\n                            <label for=\"valor_avaluo\">Valor del Avalúo <span class=\"required\">*</span></label>\n                            <div class=\"currency-input\">\n                                <span class=\"currency-symbol\">$</span>\n                                <input \n                                    type=\"text\" \n                                    id=\"valor_avaluo\" \n                                    name=\"valor_avaluo\" \n                                    placeholder=\"250000000\"\n                                    required\n                                >\n                            </div>\n                            <span class=\"input-hint\">Valor comercial actual del inmueble</span>\n                            <span class=\"error-message\" id=\"error-avaluo\"></span>\n                        </div>\n\n                        <div class=\"form-group\">\n                            <label for=\"area_m2\">Área (m²)</label>\n                            <input \n                                type=\"number\" \n                                id=\"area_m2\" \n                                name=\"area_m2\" \n                                placeholder=\"Ej: 85\"\n                                min=\"20\"\n                                max=\"10000\"\n                            >\n                        </div>\n                    </div>\n                </div>\n\n                \n                <div class=\"section\">\n                    <div class=\"section-title\">\n                        <span class=\"section-icon\">💰</span>\n                        Información del Préstamo Solicitado\n                    </div>\n\n                    <div class=\"form-group\">\n                        <label for=\"monto_solicitado\">Monto que Necesitas <span class=\"required\">*</span></label>\n                        <div class=\"currency-input\">\n                            <span class=\"currency-symbol\">$</span>\n                            <input \n                                type=\"text\" \n                                id=\"monto_solicitado\" \n                                name=\"monto_solicitado\" \n                                placeholder=\"100000000\"\n                                required\n                            >\n                        </div>\n                        <span class=\"input-hint\" id=\"ltvHint\">Calculando relación préstamo/valor...</span>\n                        <span class=\"error-message\" id=\"error-monto\"></span>\n                    </div>\n\n                    <div class=\"form-row\">\n                        <div class=\"form-group\">\n                            <label for=\"plazo_meses\">Plazo Deseado (meses)</label>\n                            <select id=\"plazo_meses\" name=\"plazo_meses\">\n                                <option value=\"\">Selecciona...</option>\n                                <option value=\"12\">12 meses (1 año)</option>\n                                <option value=\"24\">24 meses (2 años)</option>\n                                <option value=\"36\">36 meses (3 años)</option>\n                                <option value=\"48\">48 meses (4 años)</option>\n                                <option value=\"60\">60 meses (5 años)</option>\n                            </select>\n                        </div>\n\n                        <div class=\"form-group\">\n                            <label for=\"destino_credito\">Destino del Crédito <span class=\"required\">*</span></label>\n                            <select id=\"destino_credito\" name=\"destino_credito\" required>\n                                <option value=\"\">Selecciona...</option>\n                                <option value=\"Capital de Trabajo\">Capital de Trabajo</option>\n                                <option value=\"Inversión\">Inversión en Negocio</option>\n                                <option value=\"Remodelación\">Remodelación</option>\n                                <option value=\"Compra de Vehículo\">Compra de Vehículo</option>\n                                <option value=\"Pago de Deudas\">Pago de Deudas</option>\n                                <option value=\"Educación\">Educación</option>\n                                <option value=\"Otro\">Otro</option>\n                            </select>\n                        </div>\n                    </div>\n\n                    <div class=\"form-group\">\n                        <label for=\"ingresos_mensuales\">Ingresos Mensuales Aproximados</label>\n                        <div class=\"currency-input\">\n                            <span class=\"currency-symbol\">$</span>\n                            <input \n                                type=\"text\" \n                                id=\"ingresos_mensuales\" \n                                name=\"ingresos_mensuales\" \n                                placeholder=\"5000000\"\n                            >\n                        </div>\n                    </div>\n                </div>\n\n                \n                <div class=\"section\">\n                    <div class=\"checkbox-group\">\n                        <input \n                            type=\"checkbox\" \n                            id=\"acepto_terminos\" \n                            name=\"acepto_terminos\" \n                            required\n                        >\n                        <label for=\"acepto_terminos\">\n                            Acepto los <a href=\"#\" style=\"color: #3b82f6;\">términos y condiciones</a> y autorizo el tratamiento de datos personales <span class=\"required\">*</span>\n                        </label>\n                    </div>\n                    <span class=\"error-message\" id=\"error-terminos\"></span>\n                </div>\n\n                <button type=\"submit\" class=\"submit-btn\" id=\"submitBtn\">\n                    🚀 Enviar Solicitud\n                </button>\n            </form>\n\n            <div class=\"loading\" id=\"loadingDiv\">\n                <div class=\"spinner\"></div>\n                <p style=\"color: #6b7280; font-weight: 500;\">Procesando tu solicitud...</p>\n                <p style=\"color: #9ca3af; font-size: 0.875rem; margin-top: 0.5rem;\">Esto puede tomar unos segundos</p>\n            </div>\n        </div>\n    </div>\n\n    <script>\n        // Variables globales\n        const form = document.getElementById('leadForm');\n        const progressBar = document.getElementById('progressBar');\n        const loadingDiv = document.getElementById('loadingDiv');\n        const submitBtn = document.getElementById('submitBtn');\n\n        // Calcular progreso del formulario\n        function updateProgress() {\n            const inputs = form.querySelectorAll('input[required], select[required]');\n            const filled = Array.from(inputs).filter(input => {\n                if (input.type === 'checkbox') return input.checked;\n                return input.value.trim() !== '';\n            }).length;\n            \n            const progress = (filled / inputs.length) * 100;\n            progressBar.style.width = progress + '%';\n        }\n\n        // Formatear números como moneda\n        function formatCurrency(input) {\n            let value = input.value.replace(/\\D/g, '');\n            if (value) {\n                value = parseInt(value).toLocaleString('es-CO');\n                input.value = value;\n            }\n        }\n\n        // Calcular LTV (Loan to Value)\n        function calculateLTV() {\n            const avaluo = document.getElementById('valor_avaluo').value.replace(/\\D/g, '');\n            const monto = document.getElementById('monto_solicitado').value.replace(/\\D/g, '');\n            const hint = document.getElementById('ltvHint');\n            \n            if (avaluo && monto) {\n                const ltv = (parseInt(monto) / parseInt(avaluo) * 100).toFixed(1);\n                if (ltv > 80) {\n                    hint.innerHTML = `⚠️ LTV: ${ltv}% - El monto supera el 80% del avalúo (puede afectar la aprobación)`;\n                    hint.style.color = '#ef4444';\n                } else if (ltv > 70) {\n                    hint.innerHTML = `⚡ LTV: ${ltv}% - Relación moderada`;\n                    hint.style.color = '#f59e0b';\n                } else {\n                    hint.innerHTML = `✅ LTV: ${ltv}% - Excelente relación préstamo/valor`;\n                    hint.style.color = '#10b981';\n                }\n            }\n        }\n\n        // Validar cédula colombiana\n        function validarCedula(cedula) {\n            return /^[0-9]{6,10}$/.test(cedula);\n        }\n\n        // Validar email\n        function validarEmail(email) {\n            const re = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n            return re.test(email);\n        }\n\n        // Validar teléfono colombiano\n        function validarTelefono(telefono) {\n            return /^3[0-9]{9}$/.test(telefono) || /^[1-8][0-9]{6,7}$/.test(telefono);\n        }\n\n        // Event listeners para formato de moneda\n        document.getElementById('valor_avaluo').addEventListener('blur', function() {\n            formatCurrency(this);\n            calculateLTV();\n        });\n\n        document.getElementById('monto_solicitado').addEventListener('blur', function() {\n            formatCurrency(this);\n            calculateLTV();\n        });\n\n        document.getElementById('ingresos_mensuales').addEventListener('blur', function() {\n            formatCurrency(this);\n        });\n\n        // Actualizar progreso en cada cambio\n        form.addEventListener('input', updateProgress);\n        form.addEventListener('change', updateProgress);\n\n        // Validación en tiempo real\n        document.getElementById('cedula').addEventListener('blur', function() {\n            const error = document.getElementById('error-cedula');\n            if (!validarCedula(this.value)) {\n                this.classList.add('error');\n                error.textContent = 'Cédula inválida. Debe contener entre 6 y 10 dígitos.';\n                error.classList.add('show');\n            } else {\n                this.classList.remove('error');\n                error.classList.remove('show');\n            }\n        });\n\n        document.getElementById('email').addEventListener('blur', function() {\n            const error = document.getElementById('error-email');\n            if (!validarEmail(this.value)) {\n                this.classList.add('error');\n                error.textContent = 'Email inválido. Usa el formato: ejemplo@correo.com';\n                error.classList.add('show');\n            } else {\n                this.classList.remove('error');\n                error.classList.remove('show');\n            }\n        });\n\n        document.getElementById('telefono').addEventListener('blur', function() {\n            const error = document.getElementById('error-telefono');\n            if (!validarTelefono(this.value)) {\n                this.classList.add('error');\n                error.textContent = 'Teléfono inválido. Debe ser un celular (10 dígitos) o fijo (7 dígitos).';\n                error.classList.add('show');\n            } else {\n                this.classList.remove('error');\n                error.classList.remove('show');\n            }\n        });\n\n        // Manejo del submit\n        form.addEventListener('submit', async function(e) {\n            e.preventDefault();\n            \n            // Validaciones finales\n            const cedula = document.getElementById('cedula').value;\n            const email = document.getElementById('email').value;\n            const telefono = document.getElementById('telefono').value;\n            \n            if (!validarCedula(cedula) || !validarEmail(email) || !validarTelefono(telefono)) {\n                alert('Por favor corrige los errores en el formulario antes de continuar.');\n                return;\n            }\n\n            // Preparar datos\n            const formData = new FormData(form);\n            const data = {};\n            \n            formData.forEach((value, key) => {\n                // Limpiar valores de moneda\n                if (['valor_avaluo', 'monto_solicitado', 'ingresos_mensuales'].includes(key)) {\n                    data[key] = value.replace(/\\D/g, '');\n                } else {\n                    data[key] = value;\n                }\n            });\n\n            // Agregar metadata\n            data.timestamp = new Date().toISOString();\n            data.fuente = 'formulario_web';\n            data.user_agent = navigator.userAgent;\n\n            // Mostrar loading\n            form.style.display = 'none';\n            loadingDiv.classList.add('show');\n            submitBtn.disabled = true;\n\n            try {\n                // IMPORTANTE: Reemplaza esta URL con tu webhook de n8n\n                const webhookURL = 'https://cincominutos.app.n8n.cloud/webhook/lead-process';\n                \n                const response = await fetch(webhookURL, {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    },\n                    body: JSON.stringify(data)\n                });\n\n                const result = await response.json();\n                \n                // Redirigir a página de resultado\n                window.location.href = `/webhook/lead-result?lead_id=${result.lead_id}`;\n                \n            } catch (error) {\n                console.error('Error:', error);\n                loadingDiv.classList.remove('show');\n                form.style.display = 'block';\n                submitBtn.disabled = false;\n                alert('Hubo un error al procesar tu solicitud. Por favor intenta nuevamente.');\n            }\n        });\n\n        // Inicializar progreso\n        updateProgress();\n    </script>\n</body>\n</html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        352,
+        96
+      ],
+      "id": "32aeb2a3-d422-4c75-904d-b32d39bef9d0",
+      "name": "📄 Respuesta HTML Formulario"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Solicitud Recibida - Sureti</title>\n    <style>\n        * {\n            margin: 0;\n            padding: 0;\n            box-sizing: border-box;\n        }\n        body {\n            font-family: 'Inter', sans-serif;\n            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #60a5fa 100%);\n            min-height: 100vh;\n            display: flex;\n            justify-content: center;\n            align-items: center;\n            padding: 2rem;\n        }\n        .container {\n            background: white;\n            max-width: 600px;\n            width: 100%;\n            border-radius: 24px;\n            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.2);\n            overflow: hidden;\n            animation: slideUp 0.5s ease;\n        }\n        @keyframes slideUp {\n            from { opacity: 0; transform: translateY(30px); }\n            to { opacity: 1; transform: translateY(0); }\n        }\n        .header {\n            background: linear-gradient(135deg, #10b981, #059669);\n            color: white;\n            padding: 3rem 2rem;\n            text-align: center;\n        }\n        .success-icon {\n            font-size: 5rem;\n            margin-bottom: 1rem;\n            animation: bounce 1s ease;\n        }\n        @keyframes bounce {\n            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }\n            40% { transform: translateY(-20px); }\n            60% { transform: translateY(-10px); }\n        }\n        .header h1 {\n            font-size: 2rem;\n            margin-bottom: 0.5rem;\n        }\n        .content {\n            padding: 2.5rem 2rem;\n        }\n        .lead-id {\n            background: #f3f4f6;\n            padding: 1.5rem;\n            border-radius: 12px;\n            margin-bottom: 2rem;\n            text-align: center;\n        }\n        .lead-id-value {\n            font-size: 1.25rem;\n            font-weight: 700;\n            color: #1e3a8a;\n            font-family: monospace;\n        }\n        .info-box {\n            background: #eff6ff;\n            border-left: 4px solid #3b82f6;\n            padding: 1.5rem;\n            border-radius: 8px;\n            margin-bottom: 2rem;\n        }\n        .steps {\n            list-style: none;\n            padding: 0;\n        }\n        .steps li {\n            padding: 0.75rem 0;\n            display: flex;\n            gap: 0.75rem;\n        }\n        .steps li:before {\n            content: \"✓\";\n            color: #10b981;\n            font-weight: bold;\n            font-size: 1.25rem;\n        }\n        .btn {\n            display: inline-block;\n            padding: 0.75rem 1.5rem;\n            background: linear-gradient(135deg, #1e3a8a, #3b82f6);\n            color: white;\n            border-radius: 8px;\n            text-decoration: none;\n            font-weight: 600;\n            margin-top: 1rem;\n        }\n        .footer {\n            padding: 2rem;\n            text-align: center;\n            color: #6b7280;\n            font-size: 0.875rem;\n            border-top: 1px solid #e5e7eb;\n        }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"header\">\n            <div class=\"success-icon\">✅</div>\n            <h1>¡Solicitud Recibida!</h1>\n            <p>Tu información ha sido procesada correctamente</p>\n        </div>\n\n        <div class=\"content\">\n            <div class=\"lead-id\">\n                <div style=\"font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;\">ID de Seguimiento</div>\n                <div class=\"lead-id-value\" id=\"leadId\">Cargando...</div>\n            </div>\n\n            <div class=\"info-box\">\n                <h3 style=\"color: #1e40af; margin-bottom: 1rem;\">📋 ¿Qué sigue ahora?</h3>\n                <ul class=\"steps\">\n                    <li>Validaremos la información de tu inmueble</li>\n                    <li>Analizaremos tu perfil crediticio</li>\n                    <li>Verificaremos el Certificado de Tradición y Libertad</li>\n                    <li>Te contactaremos con los resultados</li>\n                </ul>\n            </div>\n\n            <div style=\"background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;\">\n                <h3 style=\"color: #92400e; margin-bottom: 1rem;\">⏰ Tiempo de Respuesta</h3>\n                <p style=\"color: #78350f;\">\n                    Procesaremos tu solicitud en <strong>24 a 48 horas hábiles</strong>. \n                    Recibirás un correo con el estado de tu solicitud.\n                </p>\n            </div>\n\n            <div style=\"text-align: center;\">\n                <a href=\"/webhook/lead-form\" class=\"btn\">Nueva Solicitud</a>\n            </div>\n        </div>\n\n        <div class=\"footer\">\n            <p>© 2026 Sureti - Préstamos Hipotecarios</p>\n        </div>\n    </div>\n\n    <script>\n        // Obtener lead_id de la URL\n        const urlParams = new URLSearchParams(window.location.search);\n        const leadId = urlParams.get('lead_id') || 'No disponible';\n        document.getElementById('leadId').textContent = leadId;\n    </script>\n</body>\n</html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1440,
+        112
+      ],
+      "id": "a77fdf72-2af8-477d-b71d-1808d745abee",
+      "name": "📄 Respuesta HTML Resultado"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"lead_id\": \"{{ $('📊 Registrar en Google Sheets').item.json.lead_id }}\",\n  \"estado_solicitud\": \"{{ $('📊 Formatear Resultado IA').first().json.analisis_ia.clasificacion }}\",\n  \"mensaje\": \"{{ $('📊 Formatear Resultado IA').first().json.analisis_ia.recomendacion }}\",\n  \"score\": {{ $('📊 Formatear Resultado IA').first().json.analisis_ia.score }},\n  \"proximos_pasos\": \"{{ $('📊 Formatear Resultado IA').first().json.analisis_ia.proximos_pasos }}\"\n}",
+        "options": {}
+      },
+      "id": "fa2c64ac-ee89-4ffc-84fa-06a70554266a",
+      "name": "✅ Respuesta Exitosa JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{ $json.error || 'Error de validación' }}\",\n  \"mensaje\": \"Por favor revisa los datos ingresados\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "768ec883-d446-4c2b-9496-1869aca15a21",
+      "name": "❌ Respuesta de Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c985c6fd-9e5a-46f7-872b-771d5e021d8e",
+              "leftValue": "={{ $('📊 Formatear Resultado IA').first().json.estado.validado }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1728,
+        448
+      ],
+      "id": "82c39e3f-0a5a-407a-99d0-43ff09a48508",
+      "name": "🔍 Verificar Estado Validación"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1M4Lo_yyPrcBjZ4CnPA1XS3O9NjSBhf6CNqzfVCPdkwQ",
+          "mode": "list",
+          "cachedResultName": "Sureti - Leads Procesados",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1M4Lo_yyPrcBjZ4CnPA1XS3O9NjSBhf6CNqzfVCPdkwQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1769914877,
+          "mode": "list",
+          "cachedResultName": "Sureti - Leads Procesados",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1M4Lo_yyPrcBjZ4CnPA1XS3O9NjSBhf6CNqzfVCPdkwQ/edit#gid=1769914877"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.sheet_row.timestamp }}",
+            "lead_id": "={{ $json.sheet_row.lead_id }}",
+            "clasificacion": "={{ $json.sheet_row.clasificacion }}",
+            "score": "={{ $json.sheet_row.score }}",
+            "razones": "={{ $json.sheet_row.razones }}",
+            "criterios_excluyentes": "={{ $json.sheet_row.criterios_excluyentes }}",
+            "recomendacion": "={{ $json.sheet_row.recomendacion }}",
+            "nombre_completo": "={{ $json.datos_personales.nombre_completo }}",
+            "cedula": "={{ $json.datos_personales.cedula }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nombre_completo",
+              "displayName": "nombre_completo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cedula",
+              "displayName": "cedula",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "clasificacion",
+              "displayName": "clasificacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "score",
+              "displayName": "score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "razones",
+              "displayName": "razones",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recomendacion",
+              "displayName": "recomendacion",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "criterios_excluyentes",
+              "displayName": "criterios_excluyentes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1312,
+        448
+      ],
+      "id": "d6185cbf-c6ce-4fa3-a2df-dd60351796f7",
+      "name": "📊 Registrar en Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "EW5my7O02JWGv41P",
+          "name": "Google Sheets - Personal Ivan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('✅ Validar Campos Requeridos').first().json.datos_personales.email }}",
+        "subject": "={{ $('📊 Formatear Resultado IA').first().json.analisis_ia.clasificacion === 'NO_VIABLE' ? 'Actualización sobre tu solicitud - Sureti' : '¡Felicidades! Tu solicitud en Sureti avanza' }}",
+        "message": "==<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Sureti - Actualización de tu solicitud</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background:#f3f4f6; margin:0; padding:0; }\n    .container { max-width:600px; margin:0 auto; background:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 8px 24px rgba(0,0,0,.08); }\n    .header { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding:26px 20px; text-align:center; color:#fff; }\n    .header h1 { margin:0; font-size:22px; font-weight:800; letter-spacing:.3px; }\n    .header p { margin:6px 0 0; font-size:13px; opacity:.9; }\n    .content { padding:22px 22px 10px; color:#374151; line-height:1.55; }\n    .card { margin:16px 0; padding:14px 14px; border-radius:10px; border-left:5px solid; }\n    .card h2 { margin:0 0 6px; font-size:16px; }\n    .muted { color:#6b7280; font-size:13px; }\n    .btnwrap { text-align:center; padding: 8px 22px 22px; }\n    .btn { display:inline-block; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:800; font-size:14px; color:#fff !important; }\n    .footer { background:#f9fafb; padding:16px 18px; text-align:center; font-size:12px; color:#6b7280; border-top:1px solid #e5e7eb; }\n    .divider { height:1px; background:#e5e7eb; margin:14px 0; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>Sureti</h1>\n      <p>Hemos recibido tu solicitud</p>\n    </div>\n\n    <div class=\"content\">\n      <p>\n        Hola, <strong>{{ $('📊 Formatear Resultado IA').first().json.datos_personales.nombre_completo.split(' ')[0] }}</strong>,\n      </p>\n\n      <p>\n        Gracias por completar el formulario. Hemos revisado tu información y te compartimos una actualización del estado.\n      </p>\n\n      \n      {{\n        $('📊 Formatear Resultado IA').first().json.analisis_ia.clasificacion === 'NO_VIABLE'\n        ? `\n          <div class=\"card\" style=\"background:#fef2f2; border-left-color:#ef4444;\">\n            <h2 style=\"color:#991b1b;\">Por ahora no podemos continuar</h2>\n            <p style=\"margin:0;\">\n              En este momento no es posible avanzar con tu solicitud con la información disponible.\n            </p>\n            <div class=\"divider\"></div>\n            <p class=\"muted\" style=\"margin:0;\">\n              Si deseas, puedes volver a intentarlo más adelante o contactarnos para recibir orientación.\n            </p>\n          </div>\n        `\n        : `\n          <div class=\"card\" style=\"background:#f0fdf4; border-left-color:#22c55e;\">\n            <h2 style=\"color:#166534;\">Tu solicitud puede avanzar</h2>\n            <p style=\"margin:0;\">\n              Tu solicitud cumple con criterios iniciales para continuar el proceso.\n              Un asesor podrá contactarte para confirmar información y, si aplica, solicitar documentación adicional.\n            </p>\n            <div class=\"divider\"></div>\n            <p class=\"muted\" style=\"margin:0;\">\n              Te recomendamos estar atento a tu correo y teléfono en las próximas 24–48 horas.\n            </p>\n          </div>\n          <p class=\"muted\">\n            Nota: esta es una revisión inicial. La aprobación final depende de validaciones y documentación.\n          </p>\n        `\n      }}\n      \n\n      <p class=\"muted\">\n        Si tú no realizaste esta solicitud, puedes ignorar este correo.\n      </p>\n    </div>\n\n    <div class=\"btnwrap\">\n      <a class=\"btn\"\n         href=\"https://sureti.co/contacto\"\n         style=\"background: {{\n           $('📊 Formatear Resultado IA').first().json.analisis_ia.clasificacion === 'NO_VIABLE'\n           ? '#6b7280'\n           : '#2563eb'\n         }};\">\n        {{\n          $('📊 Formatear Resultado IA').first().json.analisis_ia.clasificacion === 'NO_VIABLE'\n          ? 'Contactar soporte'\n          : 'Continuar proceso'\n        }}\n      </a>\n    </div>\n\n    <div class=\"footer\">\n      <p style=\"margin:0;\">Este mensaje fue generado automáticamente.</p>\n      <p style=\"margin:8px 0 0;\">Sureti Colombia S.A.S</p>\n    </div>\n  </div>\n</body>\n</html>\n",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        448
+      ],
+      "id": "296d566d-a4a8-4f6c-9619-9a7fe60cfdd8",
+      "name": "📧 Enviar Notificación Email",
+      "webhookId": "c1b27014-3e0c-4d61-9d89-9441a035e200",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "WuklA66abCcxn3rs",
+          "name": "Gmail Personal - Ivan"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🌐 FRONTEND INTERFACE\nServes as the public entry point for the mortgage lead generation system",
+        "height": 288,
+        "width": 544,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        0,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "c0504f02-16d6-4b08-8858-25cc807a7466",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## 🏁 SUCCESS REDIRECT INTERFACE\nProvides the user with a confirmation page once the lead has been successfully submitted",
+        "height": 288,
+        "width": 544,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1120,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "58414305-57ba-438f-b985-406abcfe1fcf",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "                🤖 AI RISK ANALYSIS ENGINE\n",
+        "height": 448,
+        "width": 480,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        528,
+        384
+      ],
+      "typeVersion": 1,
+      "id": "dedb5f7b-8365-4aa9-bc2f-c0ec055a1cc5",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "               🧪 MOCK DATA SIMULATIONS",
+        "height": 240,
+        "width": 448
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        80,
+        384
+      ],
+      "typeVersion": 1,
+      "id": "56c6f73c-5827-45e0-9c86-c8380647949f",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "\n## 🚀 MORTGAGE RISK ENGINE\nAutomates the entire lifecycle of a mortgage lead, from initial capture to intelligent risk assessment and final notification.",
+        "height": 368,
+        "width": 2608,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -384,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "16e4f2de-3c3f-4a50-8924-d739cd4d02e5",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## NOTAS ADICIONALES\n- **Programa** [Iniciar](https://cincominutos.app.n8n.cloud/webhook/lead-form)\n- **Politica interna** [Doc](https://drive.google.com/file/d/1KZSwOa2RqAb5doApYzhniVL0wJZhOEqm/view?usp=sharing)\n- **Leads** [Sheets](https://docs.google.com/spreadsheets/d/1M4Lo_yyPrcBjZ4CnPA1XS3O9NjSBhf6CNqzfVCPdkwQ/edit?usp=sharing)",
+        "width": 320,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        640,
+        96
+      ],
+      "typeVersion": 1,
+      "id": "a99becff-4f60-4775-be43-5ae1ad502e2f",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "jsCode": "//const leadData = $input.item.json;\n//const cedula = leadData.datos_personales.cedula;\n//const matricula = leadData.datos_inmueble.matricula_inmobiliaria;\n//const ciudad = leadData.datos_inmueble.ciudad;\n\n// Mock: escenarios según último dígito (solo para pruebas)\nconst ultimoDigitoMatricula = parseInt(matricula.slice(-1));\nconst ultimoDigitoCedula = parseInt(cedula.slice(-1));\n\nlet propietarios = [];\nlet esPropietario = true;\n\nif (ultimoDigitoMatricula === 7) {\n  propietarios = [\n    cedula,\n    `${parseInt(cedula) + 1}`\n  ];\n} else if (ultimoDigitoMatricula === 6) {\n  propietarios = [`${parseInt(cedula) + 99999}`];\n  esPropietario = false;\n} else {\n  propietarios = [cedula];\n}\n\nlet gravamenes = [];\nlet numeroGravamenes = 0;\n\nif (ultimoDigitoMatricula === 8 || ultimoDigitoMatricula === 3) {\n  numeroGravamenes = 1;\n  gravamenes.push({\n    tipo: \"HIPOTECA\",\n    acreedor: \"Banco de Bogotá S.A.\",\n    valor: Math.floor(leadData.datos_inmueble.valor_avaluo * 0.4),\n    fecha_inscripcion: \"2022-03-15\",\n    estado: \"ACTIVO\",\n    cuantia_pendiente: Math.floor(leadData.datos_inmueble.valor_avaluo * 0.25)\n  });\n} else if (ultimoDigitoMatricula === 2) {\n  numeroGravamenes = 2;\n  gravamenes.push(\n    {\n      tipo: \"HIPOTECA\",\n      acreedor: \"Bancolombia S.A.\",\n      valor: Math.floor(leadData.datos_inmueble.valor_avaluo * 0.3),\n      fecha_inscripcion: \"2021-05-20\",\n      estado: \"ACTIVO\",\n      cuantia_pendiente: Math.floor(leadData.datos_inmueble.valor_avaluo * 0.15)\n    },\n    {\n      tipo: \"EMBARGO\",\n      acreedor: \"Juzgado Civil\",\n      valor: Math.floor(leadData.datos_inmueble.valor_avaluo * 0.1),\n      fecha_inscripcion: \"2023-11-10\",\n      estado: \"ACTIVO\",\n      cuantia_pendiente: Math.floor(leadData.datos_inmueble.valor_avaluo * 0.1)\n    }\n  );\n}\n\nconst tieneEmbargo = gravamenes.some(g => g.tipo === \"EMBARGO\");\n\nconst estratos = {\n  \"Bogotá\": Math.min(6, Math.max(1, ultimoDigitoCedula % 6 + 1)),\n  \"Medellín\": Math.min(6, Math.max(1, (ultimoDigitoCedula + 1) % 6 + 1)),\n  \"Cali\": Math.min(5, Math.max(1, (ultimoDigitoCedula + 2) % 5 + 1)),\n  \"Barranquilla\": Math.min(5, Math.max(1, (ultimoDigitoCedula + 3) % 5 + 1)),\n  \"default\": 3\n};\n\nconst estrato = estratos[ciudad] || estratos[\"default\"];\nconst areaPredial = leadData.datos_inmueble.area_m2 || (60 + (ultimoDigitoMatricula * 15));\nconst avaluoCatastral = Math.floor(leadData.datos_inmueble.valor_avaluo * 0.7);\n\nconst snrResponse = {\n  api_source: \"MOCK_SNR_CATASTRO\",\n  timestamp_consulta: new Date().toISOString(),\n\n  matricula_consultada: matricula,\n  cedula_consultada: cedula,\n\n  validacion_propiedad: {\n    es_propietario: esPropietario,\n    tipo_propiedad: propietarios.length === 1 ? \"UNICA\" : \"COPROPIEDAD\",\n    porcentaje_propiedad: propietarios.length === 1 ? 100 : 50,\n    verificado: true\n  },\n\n  propietarios: propietarios.map(ced => ({\n    cedula: ced,\n    porcentaje: 100 / propietarios.length,\n    desde: \"2018-06-12\"\n  })),\n\n  inmueble: {\n    matricula_inmobiliaria: matricula,\n    direccion: leadData.datos_inmueble.direccion,\n    ciudad: ciudad,\n    departamento: ciudad === \"Bogotá\" ? \"Cundinamarca\" : ciudad === \"Medellín\" ? \"Antioquia\" : \"Valle del Cauca\",\n    tipo: leadData.datos_inmueble.tipo_inmueble || \"Apartamento\",\n    area_construida_m2: areaPredial,\n    area_terreno_m2: areaPredial * 1.2,\n    estrato: estrato,\n    uso: \"RESIDENCIAL\",\n    antiguedad_anos: 10 + ultimoDigitoMatricula,\n    numero_pisos: leadData.datos_inmueble.tipo_inmueble === \"Casa\" ? 2 : null,\n    parqueaderos: Math.floor(areaPredial / 50)\n  },\n\n  catastro: {\n    chip_catastral: `${ciudad.substring(0,3).toUpperCase()}-${Math.floor(Math.random() * 1000000)}`,\n    avaluo_catastral: avaluoCatastral,\n    impuesto_predial_anual: Math.floor(avaluoCatastral * 0.005),\n    ultima_actualizacion: \"2024-01-01\",\n    zona: estrato >= 4 ? \"URBANA_CENTRAL\" : \"URBANA_PERIFERICA\"\n  },\n\n  gravamenes: {\n    numero_total: numeroGravamenes,\n    gravamenes_activos: gravamenes,\n    valor_total_gravamenes: gravamenes.reduce((sum, g) => sum + g.cuantia_pendiente, 0),\n    tiene_embargo: tieneEmbargo\n  },\n\n  estado_juridico: {\n    libre_tradicion: numeroGravamenes === 0,\n    puede_enajenar: !tieneEmbargo,\n    limitaciones: tieneEmbargo ? [\"EMBARGO_JUDICIAL\"] : [],\n    observaciones: tieneEmbargo ? \"Inmueble con embargo activo - No puede ser enajenado\" : null\n  },\n\n  alertas: [],\n\n  metadata: {\n    tiempo_respuesta_ms: Math.floor(Math.random() * 800) + 200,\n    fuente_datos: \"SNR + IGAC\",\n    fecha_certificado: new Date().toISOString().split('T')[0],\n    vigencia_dias: 90\n  }\n};\n\n// Alertas “de negocio” a partir de lo simulado\nif (!esPropietario) {\n  snrResponse.alertas.push({\n    tipo: \"CRITERIO_EXCLUYENTE\",\n    severidad: \"CRITICA\",\n    mensaje: \"El solicitante NO figura como propietario del inmueble\",\n    accion_requerida: \"Rechazar solicitud\"\n  });\n}\n\nif (tieneEmbargo) {\n  snrResponse.alertas.push({\n    tipo: \"CRITERIO_EXCLUYENTE\",\n    severidad: \"CRITICA\",\n    mensaje: \"Inmueble con embargo activo\",\n    accion_requerida: \"Rechazar solicitud\"\n  });\n}\n\nif (numeroGravamenes > 2) {\n  snrResponse.alertas.push({\n    tipo: \"CRITERIO_EXCLUYENTE\",\n    severidad: \"CRITICA\",\n    mensaje: `Inmueble con ${numeroGravamenes} gravámenes (máximo permitido: 2)`,\n    accion_requerida: \"Rechazar solicitud\"\n  });\n}\n\nif (numeroGravamenes === 2 && !tieneEmbargo) {\n  snrResponse.alertas.push({\n    tipo: \"RIESGO_ALTO\",\n    severidad: \"ALTA\",\n    mensaje: \"Inmueble con 2 gravámenes activos\",\n    accion_requerida: \"Requiere análisis adicional\"\n  });\n}\n\nif (propietarios.length > 1) {\n  snrResponse.alertas.push({\n    tipo: \"COPROPIEDAD\",\n    severidad: \"MEDIA\",\n    mensaje: `Inmueble en copropiedad (${propietarios.length} propietarios)`,\n    accion_requerida: \"Se requieren autorizaciones de todos los propietarios\"\n  });\n}\n\nreturn {\n  json: {\n    ...leadData,\n    validaciones: {\n      ...leadData.validaciones,\n      snr_catastro: snrResponse\n    }\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        448
+      ],
+      "id": "1720f880-be7c-45af-9944-753fb7aac7f6",
+      "name": "🆔 Verificar Mock SNR",
+      "notes": "Si la matrícula termina en 6 → el solicitante no figura como propietario del inmueble.\nSi la matrícula termina en 2 → el inmueble tiene embargo (criterio excluyente).\nSi la matrícula termina en 8 o 3 → el inmueble tiene un gravamen activo (hipoteca).\nCualquier otro número → inmueble sin gravámenes ni restricciones."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "🔗 Formulario de Ingreso": {
+      "main": [
+        [
+          {
+            "node": "📄 Respuesta HTML Formulario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔗 Recepción de Datos": {
+      "main": [
+        [
+          {
+            "node": "✅ Validar Campos Requeridos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔗 Consulta de Resultado": {
+      "main": [
+        [
+          {
+            "node": "📄 Respuesta HTML Resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validar Campos Requeridos": {
+      "main": [
+        [
+          {
+            "node": "🆔 Verificar Mock Registraduría Nacional",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🆔 Verificar Mock Registraduría Nacional": {
+      "main": [
+        [
+          {
+            "node": "🆔 Verificar Mock SNR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Análisis de Riesgo": {
+      "main": [
+        [
+          {
+            "node": "📊 Formatear Resultado IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Formatear Resultado IA": {
+      "main": [
+        [
+          {
+            "node": "📊 Registrar en Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Modelo OpenAI GPT-4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 Análisis de Riesgo",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "📋 Parser de Salida",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔮 Modelo Google Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🤖 Análisis de Riesgo",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "📋 Parser de Salida": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "🤖 Análisis de Riesgo",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Verificar Estado Validación": {
+      "main": [
+        [
+          {
+            "node": "✅ Respuesta Exitosa JSON",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Respuesta de Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Registrar en Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "📧 Enviar Notificación Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Enviar Notificación Email": {
+      "main": [
+        [
+          {
+            "node": "🔍 Verificar Estado Validación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🆔 Verificar Mock SNR": {
+      "main": [
+        [
+          {
+            "node": "🤖 Análisis de Riesgo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "ef3c922e-1220-4691-8ebe-738d2dc3d76a",
+  "meta": {
+    "instanceId": "e392f08f583079018da30fdd521fef1e291e6f0876ac945e0171c75af9274930"
+  },
+  "id": "0kSLBEwoT78Vhk6QVE4PT",
+  "tags": []
+}

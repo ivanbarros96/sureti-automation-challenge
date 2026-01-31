@@ -1,0 +1,254 @@
+{
+  "name": "🚨 Template - Auditoría Errores con IA",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "dcf22888-aa76-465f-bdaf-769ed7ccb83f",
+      "name": "⚠️ Capturar Error"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e2c1aae0-415b-42c0-a617-e36af8fc93e0",
+              "name": "Nombre del WF",
+              "value": "={{ $json.workflow.name }}",
+              "type": "string"
+            },
+            {
+              "id": "8e298ae5-7794-4c31-8000-0a0acb44b6cd",
+              "name": "URL de ejecucion",
+              "value": "={{ $json.execution.url }}",
+              "type": "string"
+            },
+            {
+              "id": "2d7baa73-12b9-49e5-b2a8-2e3d54aa399c",
+              "name": "Fecha_hora",
+              "value": "={{ new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' }) }}",
+              "type": "string"
+            },
+            {
+              "id": "ee941c76-a6d1-466a-825c-5075aaadd371",
+              "name": "Mensaje de ejecucion",
+              "value": "={{ $json.execution.error.message }}",
+              "type": "string"
+            },
+            {
+              "id": "76ce2c9b-3237-4a4c-a27a-3d5932fb603d",
+              "name": "Stack",
+              "value": "={{ $json.execution.error.stack }}",
+              "type": "string"
+            },
+            {
+              "id": "5710a6ec-d263-4954-8c09-2a9ab41c8caa",
+              "name": "Ultimo Nodo ejecutado con exito",
+              "value": "={{ $json.execution.lastNodeExecuted ||\"No detectado\"}}",
+              "type": "string"
+            },
+            {
+              "id": "8ec24587-27a8-491d-8d12-e445177e5a72",
+              "name": "Operacion",
+              "value": "={{ $json.execution.mode }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        0
+      ],
+      "id": "9c8f5355-0b1f-44ca-9cf8-b4a5e81ff52a",
+      "name": "📋 Estructurar Datos Error"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json[\"Mensaje de ejecucion\"] }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=Eres un agente experto en sistemas. Tu trabajo es traducir mensajes de error técnico del inglés al español para que sean comprensibles por un equipo humano. Sé conciso."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        700,
+        0
+      ],
+      "id": "efcdbfd7-6197-4bbc-8027-6f7a008fa060",
+      "name": "🌐 Traducir Mensaje IA"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        220
+      ],
+      "id": "c181f4bd-af42-40d3-bc24-585de07b6ad5",
+      "name": "🤖 Modelo OpenAI"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n\t\"Mensaje_traducido\": \"Esto es un Mensaje en español\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        820,
+        220
+      ],
+      "id": "9641af7c-3fce-40e7-8bb7-c787832ae929",
+      "name": "📤 Parser JSON Salida"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": ""
+        },
+        "text": "=🚨 `ERROR DETECTADO PARA AUDITAR`\n\n*Nombre del WF:* {{$('📋 Estructurar Datos Error').item.json[\"Nombre del WF\"] }}\n*URL de ejecucion:* {{ $('📋 Estructurar Datos Error').item.json['URL de ejecucion'] }}\n*Fecha y Hora:* {{ $('📋 Estructurar Datos Error').item.json.Fecha_hora }}\n*Mensaje:* {{ $json.output.Mensaje_traducido }}\n*Nombre del nodo del problema:* {{ $('📋 Estructurar Datos Error').item.json['Ultimo Nodo ejecutado con exito']}}\n*Modo:* {{ $('📋 Estructurar Datos Error').item.json.Operacion}}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "link_names": true,
+          "mrkdwn": true
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1060,
+        0
+      ],
+      "id": "a749f46a-db19-4efa-b2ed-da9c09bb0683",
+      "name": "💬 Notificar a Slack",
+      "credentials": {}
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        220
+      ],
+      "id": "manual-trigger-id",
+      "name": "👉 Test Manual"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simulamos la estructura exacta que entrega el nodo 'Error Trigger' de n8n\nreturn {\n  json: {\n    execution: {\n      id: \"999999\",\n      url: \"https://n8n.ejemplo.com/execution/999999\",\n      error: {\n        message: \"Node 'Google Sheets' failed to connect: 401 Unauthorized\",\n        stack: \"Error: 401 Unauthorized... at Objects...\"\n      },\n      lastNodeExecuted: \"Google Sheets\",\n      mode: \"manual\"\n    },\n    workflow: {\n      id: \"test-wf-id\",\n      name: \"Workflow de Prueba (Simulación)\"\n    }\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        220
+      ],
+      "id": "mock-data-code",
+      "name": "🧪 Generar Error Simulado"
+    }
+  ],
+  "connections": {
+    "⚠️ Capturar Error": {
+      "main": [
+        [
+          {
+            "node": "📋 Estructurar Datos Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Estructurar Datos Error": {
+      "main": [
+        [
+          {
+            "node": "🌐 Traducir Mensaje IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌐 Traducir Mensaje IA": {
+      "main": [
+        [
+          {
+            "node": "💬 Notificar a Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Modelo OpenAI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🌐 Traducir Mensaje IA",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Parser JSON Salida": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "🌐 Traducir Mensaje IA",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "👉 Test Manual": {
+      "main": [
+        [
+          {
+            "node": "🧪 Generar Error Simulado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧪 Generar Error Simulado": {
+      "main": [
+        [
+          {
+            "node": "📋 Estructurar Datos Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
