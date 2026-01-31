@@ -1,0 +1,1 @@
+# sureti-automation-challenge
